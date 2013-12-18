@@ -3,39 +3,7 @@ use strict;
 use File::Basename;
 use POSIX 'strftime';
 
-my $VERSION = "1.05, 2013-01-09";
-
-=head1
-File /etc/sysconfig/vz-scripts/4.conf, FIREWALL directive
----------------------------------------------------------
-FIREWALL="
-	host.allowed.to.every.port
-	yet.another.host
-	* # means "any host"
-
-	[25]
-	host.allowed.to.access.smtp
-	* # means "any"
-
-	[80,443]
-	hosts.allowed.to.access.two.ports
-	
-	[udp:53]
-	*
-
-	[CUSTOM]
-	# You may use "$THIS" macro which is replaced by this machine IP
-	# (and, if the machine has many IPs, it will be multiplicated).
-	-A INPUT -i eth2 -d $THIS -j ACCEPT
-	# Or you may use commands with no references to $THIS (only
-	# such commands are allowed for 0.conf file).
-	-A INPUT -i eth1 -j ACCEPT
-"
-----------------------------------------------------------------
-We use FIREWALL directive in plain VE configs to allow to
-vzmigrate it easily from one node to another.
-=cut
-
+my $VERSION = "1.06, 2013-12-18";
 my $IPTABLES = "/etc/sysconfig/iptables";
 my ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 
@@ -230,7 +198,7 @@ sub generate_open_rule {
 		$proto = $1;
 		$dst_port = $2;
 	}
-	my $rule = 
+	my $rule =
 		($src_ip && $src_ip ne "*"? " -s $src_ip" : "") . 
 		($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") . 
 		($dst_port ne "*"? " -m multiport -p $proto --dports $dst_port" : "") .
@@ -258,9 +226,11 @@ sub read_conf {
 	$_ = <F>;
 	close(F);
 	my %opts = ();
-	my @matches = m/^\s* (\w+) \s* = \s* " ([^\"]*) "/mxg;
-	for (my $i = 0; $i < @matches; $i += 2) {
-		$opts{$matches[$i]} = $matches[$i + 1];
+	my @matches = m/^([#](?=FIREWALL))? (\w+) \s* = \s* " ([^\"]*) "/mxg;
+	for (my $i = 0; $i < @matches; $i += 3) {
+		my $data = $matches[$i + 2];
+		$data =~ s/^#//mg if $matches[$i];
+		$opts{$matches[$i + 1]} = $data;
 	}
 	return \%opts;
 }
