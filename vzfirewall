@@ -4,17 +4,34 @@ use File::Basename;
 use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 
-my $VERSION = "1.07, 2014-01-07";
-my $IPTABLES = "/etc/sysconfig/iptables";
+my $VERSION = "1.08, 2014-01-07";
 my ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 
+unless ($DIR && -d $DIR) {
+	die "$0: Error: Could not find opvenvz container conf files.\n"
+	. "(Is openvz installed?)\n\n"
+	. "Use -d to specify their location.\n\n";
+}
+
+my ($CONF) = dirname($DIR) . "/vzfirewall.conf";
+my ($RULES) = dirname($DIR) . "/vzfirewall.rules";
+my ($IPTABLES) = grep { -f $_ } ($RULES, "/etc/sysconfig/iptables", "/etc/iptables/rules.v4");
+($IPTABLES) or $IPTABLES = $RULES;
+
 my %opt = ();
-GetOptions(\%opt, 'help|h', 'version', 'conf|c=s',
-	'test|t', 'apply|a', 'force|f',
+GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
+	'force|f', 'dir|d=s', 'conf|c=s','rules=s',
 ) or exit(1);
 
 if ($opt{help})		{ usage(); }
 if ($opt{version})	{ print "vzfirewall $VERSION\n"; exit(0) }
+if ($opt{conf})		{ $CONF = $opt{conf}; }
+
+# todo: read config file here
+
+if ($opt{rules})	{ $IPTABLES = $opt{rules}; }
+if ($opt{dir})		{ $DIR = $opt{dir}; }
+
 if ($opt{test})		{ do_apply(1); }
 elsif ($opt{apply})	{ do_apply(0, defined $opt{force}); }
 else			{ usage(); }
@@ -29,15 +46,25 @@ Homepage:	http://en.dklab.ru/lib/dklab_vzfirewall
 Latest:		https://github.com/DmitryKoterov/vzfirewall
 
 Usage:
-  $0 (-h|--version|-a [-f]|-t)
+
+  $0 (-h|-V|-a|-t) [option ...]
+
+Action:
+
+  -h, --help            Display this help and exit.
+  -V, --version         Output vzfirewall version and exit.
+  -a, --apply           Apply iptables rules in $DIR/*.conf (FIREWALL directives)
+  -t, --test            Preview iptables rules in $DIR/*.conf without activation.
 
 Options:
-  -h, --help		Display this help and exit.
-      --version		Output vzfirewall version and exit.
 
-  -a, --apply		Apply iptables rules in $DIR/*.conf (FIREWALL directives)
-  -f, --force		Force iptables rules rewrite even if unchanged.
-  -t, --test		Preview iptables rules in $DIR/*.conf without activation.
+  -f, --force           Force iptables rules rewrite even if rules are unchanged.
+  -c, --conf=PATH	Location of vzfirewall configuration file.
+                        (default: $CONF)
+  -d, --dir=PATH        Specify directory containing per-container .conf files.
+                        (default: $DIR)
+      --rules=PATH      Store iptables rules in this file
+                        (default: $IPTABLES)
 
 };
 }
