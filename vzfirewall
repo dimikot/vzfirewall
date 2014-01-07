@@ -2,25 +2,44 @@
 use strict;
 use File::Basename;
 use POSIX 'strftime';
+use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 
-my $VERSION = "1.06, 2013-12-18";
+my $VERSION = "1.07, 2014-01-07";
 my $IPTABLES = "/etc/sysconfig/iptables";
 my ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 
-if (@ARGV && $ARGV[0] eq "-a") {
-	do_apply(0, $ARGV[1] && $ARGV[1] eq "-f");
-} elsif (@ARGV && $ARGV[0] eq "-t") {
-	do_apply(1);
-} else {
-	die 
-		"dkLab vzfirewall: simple rules for openvz firewall.\n" .
-		"Version: $VERSION\n" .
-		"Homepage: http://en.dklab.ru/lib/dklab_vzfirewall\n" .
-		"Usage:\n" .
-		"  - Apply rules in $DIR/*.conf (FIREWALL directives):\n" .
-		"    $0 -a [-f]\n" .
-		"  - Preview rules in $DIR/*.conf without activation:\n" .
-		"    $0 -t\n";
+my %opt = ();
+GetOptions(\%opt, 'help|h', 'version', 'conf|c=s',
+	'test|t', 'apply|a', 'force|f',
+) or exit(1);
+
+if ($opt{help})		{ usage(); }
+if ($opt{version})	{ print "vzfirewall $VERSION\n"; exit(0) }
+if ($opt{test})		{ do_apply(1); }
+elsif ($opt{apply})	{ do_apply(0, defined $opt{force}); }
+else			{ usage(); }
+
+sub usage {
+	die qq{vzfirewall $VERSION
+
+vzfirewall is a simple firewall for your openvz host
+which protects both the openvz host and containers.
+
+Homepage:	http://en.dklab.ru/lib/dklab_vzfirewall
+Latest:		https://github.com/DmitryKoterov/vzfirewall
+
+Usage:
+  $0 (-h|--version|-a [-f]|-t)
+
+Options:
+  -h, --help		Display this help and exit.
+      --version		Output vzfirewall version and exit.
+
+  -a, --apply		Apply iptables rules in $DIR/*.conf (FIREWALL directives)
+  -f, --force		Force iptables rules rewrite even if unchanged.
+  -t, --test		Preview iptables rules in $DIR/*.conf without activation.
+
+};
 }
 
 sub do_apply {
