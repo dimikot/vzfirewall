@@ -17,7 +17,7 @@ my $VERSION = "1.09, 2014-01-07";
 my ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 
 unless ($DIR && -d $DIR) {
-	print STDERR "$0: Error: Could not find opvenvz container conf files.\n"
+	print STDERR "$0: Error: Could not find openvz container conf files.\n"
 	. "(Is openvz installed?)\n\n"
 	. "Use -d to specify their location.\n\n";
 
