@@ -34,18 +34,32 @@ GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
 	'force|f', 'dir|d=s', 'conf|c=s', 'rules=s', 'verbose|v',
 ) or exit(1);
 
-if ($opt{help})		{ pod2usage( -verbose => $opt{verbose} ? 2 : 1 ); }
-if ($opt{version})	{ print "vzfirewall $VERSION\n"; exit(0) }
-if ($opt{conf})		{ $CONF = $opt{conf}; }
+if ($opt{help}) {
+        pod2usage( -verbose => $opt{verbose} ? 2 : 1 );
+}
+if ($opt{version}) {
+        print "vzfirewall $VERSION\n"; exit(0)
+}
+if ($opt{conf}) {
+        $CONF = $opt{conf};
+}
 
 # todo: read config file here
 
-if ($opt{rules})	{ $IPTABLES = $opt{rules}; }
-if ($opt{dir})		{ $DIR = $opt{dir}; }
+if ($opt{rules}) {
+    $IPTABLES = $opt{rules};
+}
+if ($opt{dir}) {
+    $DIR = $opt{dir};
+}
 
-if ($opt{test})		{ do_apply(1); }
-elsif ($opt{apply})	{ do_apply(0, defined $opt{force}); }
-else			{ pod2usage( -verbose => 1 ); }
+if ($opt{test}) {
+    do_apply(1);
+} elsif ($opt{apply}) {
+    do_apply(0, defined $opt{force});
+} else {
+    pod2usage( -verbose => 1 );
+}
 
 sub do_apply {
 	my ($test_mode, $force) = @_;
