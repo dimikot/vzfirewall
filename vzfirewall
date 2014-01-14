@@ -31,7 +31,7 @@ if ($opt{conf}) {
 if ($opt{dir}) {
     $DIR = $opt{dir};
 } else {
-    $DIR = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
+    ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 }
 
 unless ($DIR && -d $DIR) {
