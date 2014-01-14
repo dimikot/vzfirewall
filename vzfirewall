@@ -52,17 +52,17 @@ unless ($CONF) {
 # todo: re-read config file here
 }
 
-my ($RULES) = dirname($DIR) . "/vzfirewall.rules";
-my $RULES_FALLBACK = 0;
+my ($RULES_FALLBACK) = dirname($DIR) . "/vzfirewall.rules";
+my $RULES_FALLBACK_USED = 0;
 my ($IPTABLES) = grep { -f $_ } (
     "/etc/sysconfig/iptables",  # RHEL systems
     "/etc/iptables/rules.v4",   # iptables-persist
-    $RULES                      # vzfirewall fallback
+    $RULES_FALLBACK             # vzfirewall fallback
 );
 
 unless ($IPTABLES) {
-    $IPTABLES = $RULES;
-    $RULES_FALLBACK = 1;
+    $IPTABLES = $RULES_FALLBACK;
+    $RULES_FALLBACK_USED = 1;
 }
 
 if ($opt{help}) {
@@ -74,18 +74,18 @@ if ($opt{version}) {
 
 if ($opt{rules}) {
     $IPTABLES = $opt{rules};
-    $RULES_FALLBACK = 0;
+    $RULES_FALLBACK_USED = 0;
 }
 
-if ($RULES_FALLBACK && $opt{verbose}) {
+if ($RULES_FALLBACK_USED && $opt{verbose}) {
     print STDERR qq(
 NOTICE:  vzfirewall did not find any persistent iptables rules locations.
-vzfirewall will write iptables rules to:  $RULES
+vzfirewall will write iptables rules to:  $RULES_FALLBACK
 
 You will need to arrange for those rules to be loaded at system boot time,
 eg. by adding this command to system startup scripts:
 
-        iptables-restore < $RULES
+        iptables-restore < $RULES_FALLBACK
 
 Or you may find a package such as iptables-persistent for your OS to handle
 this for you.
