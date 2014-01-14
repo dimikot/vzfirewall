@@ -13,7 +13,7 @@ use File::Basename;
 use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 
-my $VERSION = "1.10, 2014-01-14";
+my $VERSION = "1.11, 2014-01-14";
 my $CONF;       # vzfirewall configuration file
 my $DIR;        # directory with openvz container .conf files
 
@@ -120,17 +120,36 @@ sub do_apply {
 	push @cmds, ":FORWARD ACCEPT [0:0]\n";
 	push @cmds, ":OUTPUT ACCEPT [0:0]\n";
 	push @cmds, "\n\n";
-	push @cmds, "##\n## Default opened channels.\n##\n";
+	push @cmds, "##\n## Basic logging rules with policy actions\n##\n";
+	push @cmds, ":vzfw-log-allow - [0:0]\n";
+	push @cmds, ":vzfw-log-deny - [0:0]\n";
+	push @cmds, "# logging with RETURN policy\n";
+	push @cmds, "-A vzfw-log-allow -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW ALLOW] \"\n";
+	push @cmds, "# logging with DENY policy\n";
+	push @cmds, "-A vzfw-log-deny -m state --state INVALID -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
+	push @cmds, "-A vzfw-log-deny -m state --state INVALID -j DROP\n";
+	push @cmds, "-A vzfw-log-deny -m addrtype --dst-type MULTICAST -j DROP\n";
+	push @cmds, "-A vzfw-log-deny -m addrtype --dst-type BROADCAST -j DROP\n";
+	push @cmds, "-A vzfw-log-deny -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
+	push @cmds, "-A vzfw-log-deny -j REJECT --reject-with icmp-admin-prohibited\n";
+	push @cmds, "\n\n";
+	push @cmds, "##\n## Default opened on loopback interface.\n##\n";
 	push @cmds, "-A INPUT -i lo -j ACCEPT\n";
 	push @cmds, "-A OUTPUT -o lo -j ACCEPT\n";
 	push @cmds, "-A FORWARD -i lo -j ACCEPT\n";
+	push @cmds, "\n##\n## Stop spoofing of our addresses.\n##\n";
+	push @cmds, "-A INPUT -m addrtype --src-type LOCAL -j vzfw-log-deny\n";
 	for my $chain ("INPUT", "OUTPUT", "FORWARD") {
+		push @cmds, "\n##\n## Firewall states ($chain).\n##\n";
+		push @cmds, "-A $chain -m state --state INVALID -j vzfw-log-deny\n";
 		push @cmds, "-A $chain -m state --state ESTABLISHED,RELATED -j ACCEPT\n";
+
+		push @cmds, "# Allowed icmp types\n";
 		for my $type (@ICMP_TYPES) {
 			push @cmds, "-A $chain -p icmp --icmp-type $type -j ACCEPT\n";
 		}
 	}
-	push @cmds, "# Open SSH port on hardware node - for safety.\n";
+	push @cmds, "\n# Open SSH port on hardware node - for safety.\n";
 	push @cmds, "-A INPUT -p tcp --dport 22 -j ACCEPT\n";
 	push @cmds, "\n\n";
 	
@@ -206,8 +225,8 @@ sub do_apply {
 	}
 
 	push @cmds, "\n\n##\n## Default action for incoming packets - reject.\n##\n";
-	push @cmds, "-A INPUT -j DROP\n";
-	push @cmds, "-A FORWARD -j DROP\n";
+	push @cmds, "-A INPUT -j vzfw-log-deny\n";
+	push @cmds, "-A FORWARD -j vzfw-log-deny\n";
 	push @cmds, "COMMIT\n";
 	my $cmds = join "", @cmds;
 	
@@ -298,7 +317,7 @@ sub generate_open_rule {
 
 sub generate_close_rule {
 	my ($dst_ip) = @_;
-	return ($dst_ip && $dst_ip ne "*"? "-A FORWARD -d $dst_ip" : "-A INPUT") . " -j DROP\n";
+	return ($dst_ip && $dst_ip ne "*"? "-A FORWARD -d $dst_ip" : "-A INPUT") . " -j vzfw-log-deny\n";
 }
 
 sub generate_outgoing_rule {
