@@ -14,17 +14,44 @@ use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 
 my $VERSION = "1.09, 2014-01-07";
-my ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
+my $CONF;       # vzfirewall configuration file
+my $DIR;        # directory with openvz container .conf files
+
+my %opt = ();
+GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
+	'force|f', 'dir|d=s', 'conf|c=s', 'rules=s', 'verbose|v',
+) or exit(1);
+
+if ($opt{conf}) {
+    $CONF = $opt{conf};
+
+# todo: read config file here
+}
+
+if ($opt{dir}) {
+    $DIR = $opt{dir};
+} else {
+    $DIR = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
+}
 
 unless ($DIR && -d $DIR) {
-	print STDERR "$0: Error: Could not find openvz container conf files.\n"
-	. "(Is openvz installed?)\n\n"
-	. "Use -d to specify their location.\n\n";
+	print STDERR qq(
+ERROR: vzfirewall could not find openvz container conf files.
+(Is openvz installed?)
+
+Use -d to specify their location.
+
+);
 
 	pod2usage( -verbose => 1 );
 }
 
-my ($CONF) = dirname($DIR) . "/vzfirewall.conf";
+unless ($CONF) {
+    ($CONF) = dirname($DIR) . "/vzfirewall.conf";
+
+# todo: re-read config file here
+}
+
 my ($RULES) = dirname($DIR) . "/vzfirewall.rules";
 my $RULES_FALLBACK = 0;
 my ($IPTABLES) = grep { -f $_ } (
@@ -38,29 +65,16 @@ unless ($IPTABLES) {
     $RULES_FALLBACK = 1;
 }
 
-my %opt = ();
-GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
-	'force|f', 'dir|d=s', 'conf|c=s', 'rules=s', 'verbose|v',
-) or exit(1);
-
 if ($opt{help}) {
-        pod2usage( -verbose => $opt{verbose} ? 2 : 1 );
+    pod2usage( -verbose => $opt{verbose} ? 2 : 1 );
 }
 if ($opt{version}) {
-        print "vzfirewall $VERSION\n"; exit(0)
+    print "vzfirewall $VERSION\n"; exit(0)
 }
-if ($opt{conf}) {
-        $CONF = $opt{conf};
-}
-
-# todo: read config file here
 
 if ($opt{rules}) {
     $IPTABLES = $opt{rules};
     $RULES_FALLBACK = 0;
-}
-if ($opt{dir}) {
-    $DIR = $opt{dir};
 }
 
 if ($RULES_FALLBACK && $opt{verbose}) {
