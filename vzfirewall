@@ -13,13 +13,15 @@ use File::Basename;
 use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 
-my $VERSION = "1.09, 2014-01-07";
+my $VERSION = "1.10, 2014-01-14";
 my $CONF;       # vzfirewall configuration file
 my $DIR;        # directory with openvz container .conf files
 
 my %opt = ();
+my @ICMP_TYPES;
 GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
 	'force|f', 'dir|d=s', 'conf|c=s', 'rules=s', 'verbose|v',
+	'icmp-types=s{1,}' => \@ICMP_TYPES,
 ) or exit(1);
 
 if ($opt{conf}) {
@@ -31,7 +33,7 @@ if ($opt{conf}) {
 if ($opt{dir}) {
     $DIR = $opt{dir};
 } else {
-    $DIR = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
+    ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 }
 
 unless ($DIR && -d $DIR) {
@@ -77,6 +79,11 @@ if ($opt{rules}) {
     $RULES_FALLBACK_USED = 0;
 }
 
+@ICMP_TYPES = split(" ", join(' ', @ICMP_TYPES));
+unless ($ICMP_TYPES[0]) {
+    @ICMP_TYPES = (3, 4, 11, 12, 8,);
+}
+
 if ($RULES_FALLBACK_USED && $opt{verbose}) {
     print STDERR qq(
 NOTICE:  vzfirewall did not find any persistent iptables rules locations.
@@ -117,9 +124,11 @@ sub do_apply {
 	push @cmds, "-A INPUT -i lo -j ACCEPT\n";
 	push @cmds, "-A OUTPUT -o lo -j ACCEPT\n";
 	push @cmds, "-A FORWARD -i lo -j ACCEPT\n";
-	for ("INPUT", "OUTPUT", "FORWARD") {
-		push @cmds, "-A $_ -p icmp -j ACCEPT\n";
-		push @cmds, "-A $_ -m state --state ESTABLISHED,RELATED -j ACCEPT\n";
+	for my $chain ("INPUT", "OUTPUT", "FORWARD") {
+		push @cmds, "-A $chain -m state --state ESTABLISHED,RELATED -j ACCEPT\n";
+		for my $type (@ICMP_TYPES) {
+			push @cmds, "-A $chain -p icmp --icmp-type $type -j ACCEPT\n";
+		}
 	}
 	push @cmds, "# Open SSH port on hardware node - for safety.\n";
 	push @cmds, "-A INPUT -p tcp --dport 22 -j ACCEPT\n";
@@ -381,6 +390,17 @@ Store iptables rules in this file.
 =item B<-v>, B<--verbose>
 
 Be more verbose.
+
+=back
+
+You can change the default firewall behavior with the following options:
+
+=over 20
+
+=item B<--icmp-types>=I<types>
+
+Specify allowed icmp types.
+Default: 3 4 11 12 8 (destination-unreachable source-quench time-exceeded parameter-problem echo-request)
 
 =back
 
