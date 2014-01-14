@@ -13,15 +13,17 @@ use File::Basename;
 use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 
-my $VERSION = "1.11, 2014-01-14";
+my $VERSION = "1.12, 2014-01-14";
 my $CONF;       # vzfirewall configuration file
 my $DIR;        # directory with openvz container .conf files
 
 my %opt = ();
 my @ICMP_TYPES;
+my @FAILSAFE_ADDRS;
 GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
 	'force|f', 'dir|d=s', 'conf|c=s', 'rules=s', 'verbose|v',
 	'icmp-types=s{1,}' => \@ICMP_TYPES,
+	'failsafe-addr=s{1,}' => \@FAILSAFE_ADDRS,
 ) or exit(1);
 
 if ($opt{conf}) {
@@ -82,6 +84,11 @@ if ($opt{rules}) {
 @ICMP_TYPES = split(" ", join(' ', @ICMP_TYPES));
 unless ($ICMP_TYPES[0]) {
     @ICMP_TYPES = (3, 4, 11, 12, 8,);
+}
+
+@FAILSAFE_ADDRS = split(" ", join(' ', @FAILSAFE_ADDRS));
+unless ($FAILSAFE_ADDRS[0]) {
+    @FAILSAFE_ADDRS = "any";
 }
 
 if ($RULES_FALLBACK_USED && $opt{verbose}) {
@@ -149,8 +156,19 @@ sub do_apply {
 			push @cmds, "-A $chain -p icmp --icmp-type $type -j ACCEPT\n";
 		}
 	}
-	push @cmds, "\n# Open SSH port on hardware node - for safety.\n";
-	push @cmds, "-A INPUT -p tcp --dport 22 -j ACCEPT\n";
+	if ( grep { /any/i } @FAILSAFE_ADDRS ) {
+		push @cmds, "\n# Failsafe SSH access to hardware node.\n";
+		push @cmds, "-A INPUT -p tcp --dport 22 -j vzfw-log-allow\n";
+		push @cmds, "-A INPUT -p tcp --dport 22 -j ACCEPT\n";
+	} elsif ( grep { /none/i } @FAILSAFE_ADDRS ) {
+		push @cmds, "\n# Failsafe SSH access to hardware node is disabled.\n";
+	} else {
+		push @cmds, "\n# Failsafe SSH access to hardware node.\n";
+		for my $addr (@FAILSAFE_ADDRS) {
+			push @cmds, "-A INPUT -p tcp -s $addr --dport 22 -j vzfw-log-allow\n";
+			push @cmds, "-A INPUT -p tcp -s $addr --dport 22 -j ACCEPT\n";
+		}
+	}
 	push @cmds, "\n\n";
 	
 	# Collect all data.
@@ -419,7 +437,15 @@ You can change the default firewall behavior with the following options:
 =item B<--icmp-types>=I<types>
 
 Specify allowed icmp types.
+
 Default: 3 4 11 12 8 (destination-unreachable source-quench time-exceeded parameter-problem echo-request)
+
+=item B<--failsafe-addr>=I<addr>
+
+Specify hosts allowed administrative (ssh) access to the openvz hardware node.
+I<addr> can be a single host, subnet, C<any> or C<none>.
+
+Default: any
 
 =back
 
