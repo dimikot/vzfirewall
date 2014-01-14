@@ -26,8 +26,17 @@ unless ($DIR && -d $DIR) {
 
 my ($CONF) = dirname($DIR) . "/vzfirewall.conf";
 my ($RULES) = dirname($DIR) . "/vzfirewall.rules";
-my ($IPTABLES) = grep { -f $_ } ($RULES, "/etc/sysconfig/iptables", "/etc/iptables/rules.v4");
-($IPTABLES) or $IPTABLES = $RULES;
+my $RULES_FALLBACK = 0;
+my ($IPTABLES) = grep { -f $_ } (
+    "/etc/sysconfig/iptables",  # RHEL systems
+    "/etc/iptables/rules.v4",   # iptables-persist
+    $RULES                      # vzfirewall fallback
+);
+
+unless ($IPTABLES) {
+    $IPTABLES = $RULES;
+    $RULES_FALLBACK = 1;
+}
 
 my %opt = ();
 GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
@@ -48,9 +57,26 @@ if ($opt{conf}) {
 
 if ($opt{rules}) {
     $IPTABLES = $opt{rules};
+    $RULES_FALLBACK = 0;
 }
 if ($opt{dir}) {
     $DIR = $opt{dir};
+}
+
+if ($RULES_FALLBACK && $opt{verbose}) {
+    print STDERR qq(
+NOTICE:  vzfirewall did not find any persistent iptables rules locations.
+vzfirewall will write iptables rules to:  $RULES
+
+You will need to arrange for those rules to be loaded at system boot time,
+eg. by adding this command to system startup scripts:
+
+        iptables-restore < $RULES
+
+Or you may find a package such as iptables-persistent for your OS to handle
+this for you.
+
+);
 }
 
 if ($opt{test}) {
@@ -406,9 +432,9 @@ Default vzfirewall configuration file locations.
 
 Default location of OpenVZ container .conf scripts.
 
-=item C</etc/vz/vzfirewall.rules>, C</etc/sysconfig/iptables>, C</etc/iptables/rules.v4>
+=item C</etc/sysconfig/iptables>, C</etc/iptables/rules.v4>, C</etc/vz/vzfirewall.rules>
 
-Default location of stored iptables rules file.
+Default locations searched for stored iptables rules file.
 
 =back
 
