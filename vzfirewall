@@ -354,6 +354,7 @@ sub read_conf {
 	for (my $i = 0; $i < @matches; $i += 3) {
 		my $data = $matches[$i + 2];
 		$data =~ s/^#//mg if $matches[$i];
+		$data =~ s/'/"/sg;
 		$opts{$matches[$i + 1]} = $data;
 	}
 	return \%opts;
