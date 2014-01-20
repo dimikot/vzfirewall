@@ -62,5 +62,6 @@ SYNOPSIS
    characters again.
 
 2. Run:
-   # vzfirewall -a  - to apply rules
-   # vafirewall -t  - to test rules with no application
+   # vzfirewall -a     - to apply rules
+   # vzfirewall -t     - to test rules with no application
+   # vzfirewall -h -v  - vzfirewall documentation
