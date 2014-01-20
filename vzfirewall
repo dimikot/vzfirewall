@@ -12,33 +12,34 @@ use Pod::Usage;
 use File::Basename;
 use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
+use Switch;
 
-my $VERSION = "1.12, 2014-01-14";
-my $CONF;       # vzfirewall configuration file
-my $DIR;        # directory with openvz container .conf files
+my $VERSION = "1.13, 2014-01-20";
 
-my %opt = ();
+my %conf = ();  # running configuration (defaults + config file + cli opts)
+my %opt = ();   # command line options
+
 my @ICMP_TYPES;
 my @FAILSAFE_ADDRS;
 GetOptions(\%opt, 'help|h', 'version|V', 'apply|a', 'test|t',
-	'force|f', 'dir|d=s', 'conf|c=s', 'rules=s', 'verbose|v',
+	'vzfw-conf|conf|c=s', 'force|f', 'verbose|v',
+	'iptables-rules|rules=s', 'openvz-conf-dir|dir|d=s',
 	'icmp-types=s{1,}' => \@ICMP_TYPES,
-	'failsafe-addr=s{1,}' => \@FAILSAFE_ADDRS,
+	'failsafe-addrs=s{1,}' => \@FAILSAFE_ADDRS,
 ) or exit(1);
 
-if ($opt{conf}) {
-    $CONF = $opt{conf};
-
-# todo: read config file here
+if ($opt{'vzfw-conf'}) {
+    $conf{'vzfw-conf'} = $opt{'vzfw-conf'};
+    read_vzfirewall_conf( $conf{'vzfw-conf'}, \%conf, \%opt );
 }
 
-if ($opt{dir}) {
-    $DIR = $opt{dir};
-} else {
-    ($DIR) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
+if ($opt{'openvz-conf-dir'}) {
+    $conf{'openvz-conf-dir'} = $opt{dir};
+} elsif (! $conf{'openvz-conf-dir'}) {
+    ($conf{'openvz-conf-dir'}) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 }
 
-unless ($DIR && -d $DIR) {
+unless ($conf{'openvz-conf-dir'} && -d $conf{'openvz-conf-dir'}) {
 	print STDERR qq(
 ERROR: vzfirewall could not find openvz container conf files.
 (Is openvz installed?)
@@ -50,23 +51,36 @@ Use -d to specify their location.
 	pod2usage( -verbose => 1 );
 }
 
-unless ($CONF) {
-    ($CONF) = dirname($DIR) . "/vzfirewall.conf";
-
-# todo: re-read config file here
+unless ($conf{'vzfw-conf'}) {
+    ($conf{'vzfw-conf'}) = dirname($conf{'openvz-conf-dir'}) . "/vzfirewall.conf";
+    if ( -f $conf{'vzfw-conf'} ) {
+        read_vzfirewall_conf( $conf{'vzfw-conf'}, \%conf, \%opt );
+    }
 }
 
-my ($RULES_FALLBACK) = dirname($DIR) . "/vzfirewall.rules";
-my $RULES_FALLBACK_USED = 0;
-my ($IPTABLES) = grep { -f $_ } (
-    "/etc/sysconfig/iptables",  # RHEL systems
-    "/etc/iptables/rules.v4",   # iptables-persist
-    $RULES_FALLBACK             # vzfirewall fallback
-);
+unless ($conf{'openvz-conf-dir'} && -d $conf{'openvz-conf-dir'}) {
+    die "ERROR: invalid openvz container conf directory.\n"
+        . "Fix OPENVZ_CONF_DIR in $conf{'vzfw-conf'}.\n";
+}
 
-unless ($IPTABLES) {
-    $IPTABLES = $RULES_FALLBACK;
-    $RULES_FALLBACK_USED = 1;
+my ($RULES_FALLBACK) = dirname($conf{'openvz-conf-dir'}) . "/vzfirewall.rules";
+my $RULES_FALLBACK_USED = 0;
+
+my $IPTABLES;
+if ($opt{'iptables-rules'}) {
+    $IPTABLES = $opt{'iptables-rules'};
+} elsif ($conf{'iptables-rules'}) {
+    $IPTABLES = $conf{'iptables-rules'};
+} else {
+    ($IPTABLES) = grep { -f $_ } (
+        "/etc/sysconfig/iptables",  # RHEL systems
+        "/etc/iptables/rules.v4",   # iptables-persist
+        $RULES_FALLBACK             # vzfirewall fallback
+    );
+    unless ($IPTABLES) {
+        $IPTABLES = $RULES_FALLBACK;
+        $RULES_FALLBACK_USED = 1;
+    }
 }
 
 if ($opt{help}) {
@@ -76,19 +90,20 @@ if ($opt{version}) {
     print "vzfirewall $VERSION\n"; exit(0)
 }
 
-if ($opt{rules}) {
-    $IPTABLES = $opt{rules};
-    $RULES_FALLBACK_USED = 0;
-}
-
-@ICMP_TYPES = split(" ", join(' ', @ICMP_TYPES));
-unless ($ICMP_TYPES[0]) {
+@ICMP_TYPES = split(" ", join(' ', @ICMP_TYPES));           # set via Getoptions
+if ($ICMP_TYPES[0]) {
+    $conf{'icmp-types'} = \@ICMP_TYPES;
+} elsif (! $conf{'icmp-types'}) {
     @ICMP_TYPES = (3, 4, 11, 12, 8,);
+    $conf{'icmp-types'} = \@ICMP_TYPES;
 }
 
-@FAILSAFE_ADDRS = split(" ", join(' ', @FAILSAFE_ADDRS));
-unless ($FAILSAFE_ADDRS[0]) {
-    @FAILSAFE_ADDRS = "any";
+@FAILSAFE_ADDRS = split(" ", join(' ', @FAILSAFE_ADDRS));   # set via Getoptions
+if ($FAILSAFE_ADDRS[0]) {
+    $conf{'failsafe-addrs'} = \@FAILSAFE_ADDRS;
+} elsif (! $conf{'failsafe-addrs'}) {
+    @FAILSAFE_ADDRS = ("any",);
+    $conf{'failsafe-addrs'} = \@FAILSAFE_ADDRS;
 }
 
 if ($RULES_FALLBACK_USED && $opt{verbose}) {
@@ -152,19 +167,19 @@ sub do_apply {
 		push @cmds, "-A $chain -m state --state ESTABLISHED,RELATED -j ACCEPT\n";
 
 		push @cmds, "# Allowed icmp types\n";
-		for my $type (@ICMP_TYPES) {
+		for my $type ( @{$conf{'icmp-types'}} ) {
 			push @cmds, "-A $chain -p icmp --icmp-type $type -j ACCEPT\n";
 		}
 	}
-	if ( grep { /any/i } @FAILSAFE_ADDRS ) {
-		push @cmds, "\n# Failsafe SSH access to hardware node.\n";
+	if ( grep { /any/i } @{$conf{'failsafe-addrs'}} ) {
+		push @cmds, "\n# Failsafe SSH access open to hardware node.\n";
 		push @cmds, "-A INPUT -p tcp --dport 22 -j vzfw-log-allow\n";
 		push @cmds, "-A INPUT -p tcp --dport 22 -j ACCEPT\n";
-	} elsif ( grep { /none/i } @FAILSAFE_ADDRS ) {
+	} elsif ( grep { /none/i } @{$conf{'failsafe-addrs'}} ) {
 		push @cmds, "\n# Failsafe SSH access to hardware node is disabled.\n";
 	} else {
 		push @cmds, "\n# Failsafe SSH access to hardware node.\n";
-		for my $addr (@FAILSAFE_ADDRS) {
+		for my $addr ( @{$conf{'failsafe-addrs'}} ) {
 			push @cmds, "-A INPUT -p tcp -s $addr --dport 22 -j vzfw-log-allow\n";
 			push @cmds, "-A INPUT -p tcp -s $addr --dport 22 -j ACCEPT\n";
 		}
@@ -173,13 +188,13 @@ sub do_apply {
 	
 	# Collect all data.
 	my @parsed = ();
-	foreach my $conf (glob($DIR . "/*.conf")) {
-		my $basename = basename($conf);
-		my $opts = read_conf($conf);
+	foreach my $ct_conf (glob($conf{'openvz-conf-dir'} . "/*.conf")) {
+		my $basename = basename($ct_conf);
+		my $opts = read_openvz_conf($ct_conf);
 		my ($rules, $custom) = read_rules($opts->{FIREWALL});
 		my @dst_ips;
 		if ($basename ne "0.conf") {
-			my $ips = $opts->{IP_ADDRESS} or die "Cannot find IP_ADDRESS in $conf\n";
+			my $ips = $opts->{IP_ADDRESS} or die "Cannot find IP_ADDRESS in $ct_conf\n";
 			$ips =~ s/^\s+|\s+$//sg;
 			@dst_ips = split /\s+/, $ips;
 		} else {
@@ -343,7 +358,7 @@ sub generate_outgoing_rule {
 	return ($src_ip && $src_ip ne "*"? "-A FORWARD -s $src_ip" : "-A OUTPUT") . " -j ACCEPT\n";
 }
 
-sub read_conf {
+sub read_openvz_conf {
 	my ($conf) = @_;
 	open(local *F, $conf) or die "Cannot open $conf: $!\n";
 	local $/;
@@ -358,6 +373,60 @@ sub read_conf {
 		$opts{$matches[$i + 1]} = $data;
 	}
 	return \%opts;
+}
+
+sub read_vzfirewall_conf {
+    my ($conf, $cfg, $cli) = @_;
+    my ($l, $n, $v);
+    my %filecfg = ();
+
+    open(local *F, $conf) or die "Cannot open $conf: $!\n";
+    while (<F>) {
+        chop ($l = $_);
+
+        $l =~ s/#.*$//;     # comments
+        $l =~ s/^\s*//;     # leading spaces
+        $l =~ s/\s*$//;     # trailing spaces
+
+        if ($l ne "") {
+            ($n, $v) = split (/\w*=\w*/, $l);
+
+            $n = join(" ", split(" ", $n) );
+            $n =~ s/^\s*//;
+            $n =~ s/\s*$//;
+
+            $v = join(" ", split(" ", $v) );
+            $v =~ s/^\s*//;
+            $v =~ s/\s*$//;
+
+            switch ($n) {
+                case "OPENVZ_CONF_DIR" {
+                    unless ($$cli{'openvz-conf-dir'}) {
+                        $$cfg{'openvz-conf-dir'} = $v;
+                    }
+                }
+                case "IPTABLES_RULES" {
+                    unless ($$cli{'iptables-rules'}) {
+                        $$cfg{'iptables-rules'} = $v;
+                    }
+                }
+                case "ICMP_TYPES" {
+                    unless ($$cli{'icmp-types'}) {
+                        my (@v) = split(" ", $v);
+                        $$cfg{'icmp-types'} = \@v;
+                    }
+                }
+                case "FAILSAFE_ADDRS" {
+                    unless ($$cli{'failsafe-addrs'}) {
+                        my (@v) = split(" ", $v);
+                        $$cfg{'failsafe-addrs'} = \@v;
+                    }
+                }
+            }
+        }
+    }
+    close(F);
+    return;
 }
 
 my %resolved = ();
@@ -379,6 +448,7 @@ __END__
 
 vzfirewall - A simple firewall for OpenVZ
 
+
 =head1 SYNOPSIS
 
 B<vzfirewall> (B<-h>|B<-V>|B<-a>|B<-t>) [B<option> ...]
@@ -397,11 +467,11 @@ Output vzfirewall version and exit.
 
 =item B<-a>, B<--apply>
 
-Apply iptables rules in $DIR/*.conf (FIREWALL directives).
+Apply iptables rules in openvz container *.conf files (FIREWALL directives).
 
 =item B<-t>, B<--test>
 
-Preview iptables rules in $DIR/*.conf without activation.
+Preview iptables rules in openvz container *.conf files without activation.
 
 =back
 
@@ -409,19 +479,19 @@ You B<may> specify any of the options:
 
 =over 20
 
-=item B<-f>, B<--force>
-
-Force iptables rules rewrite even if rules are unchanged.
-
-=item B<-c>, B<--conf>=I<PATH>
+=item B<-c>, B<--conf>, B<vzfw-conf>=I<PATH>
 
 Location of vzfirewall configuration file.
 
-=item B<-d>, B<--dir>=I<PATH>
+=item B<-f>, B<--force>
+
+Force rewrite of iptables rules even if rules are unchanged.
+
+=item B<-d>, B<--dir>, B<--openvz-conf-dir>=I<PATH>
 
 Specify directory containing per-container .conf files.
 
-=item B<--rules>=I<PATH>
+=item B<--rules>, B<--iptables-rules>=I<PATH>
 
 Store iptables rules in this file.
 
@@ -441,7 +511,7 @@ Specify allowed icmp types.
 
 Default: 3 4 11 12 8 (destination-unreachable source-quench time-exceeded parameter-problem echo-request)
 
-=item B<--failsafe-addr>=I<addr>
+=item B<--failsafe-addrs>=I<addr>
 
 Specify hosts allowed administrative (ssh) access to the openvz hardware node.
 I<addr> can be a single host, subnet, C<any> or C<none>.
@@ -456,10 +526,66 @@ Default: any
 vzfirewall is a simple firewall for an openvz host
 which protects both the openvz host and its containers.
 
-vzfirewall uses openvz container .conf files for configuration,
-just add a C<FIREWALL> directive to specify the firewall rules.
+vzfirewall uses openvz .conf files for configuration of
+individual containers, just add a C<FIREWALL> directive
+to specify the container's firewall rules.
+
+vzfirewall can use an optional config file for system settings,
+but does try to figure out it's environment and use sane defaults
+so the config file often isn't needed.  Command line options
+override the corresponding config file settings.
+
+
+=head1 CONFIGURATION FILE
+
+The C<vzfirewall.conf> file uses a basic B<name = value> syntax;
+comments begin with #.
+
+The following settings are supported:
+
+=over 20
+
+=item C<OPENVZ_CONF_DIR>
+
+The location of openvz container configuration files.
+
+Corresponds to --openvz-conf-dir command-line option.
+
+=item C<IPTABLES_RULES>
+
+File that iptables rules will be written to.  This file needs to be
+loaded using iptables-restore on system startup.
+
+Corresponds to --iptables-rules command-line option.
+
+=item C<ICMP_TYPES>
+
+Allowed icmp types.
+
+Corresponds to --icmp-types command-line option.
+
+=item C<FAILSAFE_ADDRS>
+
+Specify hosts allowed administrative (ssh) access to the openvz hardware node.
+
+Corresponds to --failsafe-addrs command-line option.
+
+=back
+
 
 =head1 EXAMPLES
+
+
+=head2 C<vzfirewall.conf>
+
+The following C<vzfirewall.conf> is equivalent to the default settings
+on a C<debian> system using C<iptables-persistent> to load iptables rules:
+
+ OPENVZ_CONF_DIR = /etc/vz/conf
+ IPTABLES_RULES  = /etc/iptables/rules.v4
+ ICMP_TYPES = 3 4 11 12 8
+ FAILSAFE_ADDRS = any
+
 
 =head2 Firewall the OpenVZ host
 
@@ -518,6 +644,7 @@ Default locations searched for stored iptables rules file.
 
 =back
 
+
 =head1 SEE ALSO
 
 =over
@@ -539,6 +666,7 @@ vzfirewall homepage
 Development and Latest Version
 
 =back
+
 
 =head1 LICENSE
 
@@ -563,6 +691,7 @@ along with this program; if not, write to:
  Boston, MA 02110-1301 USA
 
 =back
+
 
 =head1 AUTHORS
 
