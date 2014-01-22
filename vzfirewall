@@ -34,7 +34,7 @@ if ($opt{'vzfw-conf'}) {
 }
 
 if ($opt{'openvz-conf-dir'}) {
-    $conf{'openvz-conf-dir'} = $opt{dir};
+    $conf{'openvz-conf-dir'} = $opt{'openvz-conf-dir'};
 } elsif (! $conf{'openvz-conf-dir'}) {
     ($conf{'openvz-conf-dir'}) = grep { -d $_ } ("/etc/sysconfig/vz-scripts", "/etc/vz/conf");
 }
