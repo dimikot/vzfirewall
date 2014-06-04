@@ -20,3 +20,4 @@ if type -p vzfirewall > /dev/null; then
   fi
 fi
 
+exit 0
