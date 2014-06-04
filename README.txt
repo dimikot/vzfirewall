@@ -25,6 +25,14 @@ cd /usr/sbin
 wget http://github.com/DmitryKoterov/vzfirewall/raw/master/vzfirewall
 chmod +x vzfirewall
 
+# Optional:  vps.premount action script to ensure vzfirewall is run
+# (handy when you vzmigrate containers)
+
+cd /etc/vz/conf
+(test -f vps.premount && echo "vps.premount exists, manual integration required") || ( \
+    wget http://github.com/DmitryKoterov/vzfirewall/raw/master/vps.premount; \
+    chmod +x vps.premount )
+
 
 SYNOPSIS
 --------

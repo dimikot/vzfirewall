@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# vps.premount
+#
+
+#  Sanity check the environment
+[ -z "${VEID}" ] && exit 1
+[ -z "${VE_CONFFILE}" ] && exit 1
+
+#  Source VPS configuration files in the same order as vzctl
+[ -f /etc/vz/vz.conf ] || exit 1
+[ -f ${VE_CONFFILE} ] || exit 1
+. /etc/vz/vz.conf
+. ${VE_CONFFILE}
+
+if type -p vzfirewall > /dev/null; then
+  #  Test vzfirewall config for errors before running
+  if vzfirewall -t > /dev/null 2>&1; then
+    vzfirewall -a > /dev/null 2>&1
+  fi
+fi
+
