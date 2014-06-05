@@ -1,4 +1,4 @@
-vzfirewall: extremely simple tool which configures opened ports
+vzfirewall: an extremely simple tool to configure opened ports
             and hosts for incoming connections in OpenVZ environment
 (C) dkLab, http://en.dklab.ru/lib/dklab_vzfirewall/
 
