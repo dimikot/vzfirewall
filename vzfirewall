@@ -215,7 +215,7 @@ sub do_apply {
             unless ($ips) {
                 $ips = $opts->{VETH_IP_ADDRESS} or die "Cannot find IP_ADDRESS in $ct_conf\n";
             }
-            $ips =~ s/^\s+|\s+$//sg;
+            $ips =~ s/^\s+|\s+$|\/\S+//sg;
             @dst_ips = split /\s+/, $ips;
         } else {
             # "" meands "host node IPs" (everything)
