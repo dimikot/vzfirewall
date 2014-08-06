@@ -15,7 +15,7 @@ use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Switch;
 
-my $VERSION = "1.14, 2014-01-27";
+my $VERSION = "1.15, 2014-08-06";
 
 my %conf = ();  # running configuration (defaults + config file + cli opts)
 my %opt = ();   # command line options
@@ -211,7 +211,10 @@ sub do_apply {
         my ($rules, $custom) = read_rules($opts->{FIREWALL});
         my @dst_ips;
         if ($basename ne "0.conf") {
-            my $ips = $opts->{IP_ADDRESS} or die "Cannot find IP_ADDRESS in $ct_conf\n";
+            my $ips = $opts->{IP_ADDRESS};
+            unless ($ips) {
+                $ips = $opts->{VETH_IP_ADDRESS} or die "Cannot find IP_ADDRESS in $ct_conf\n";
+            }
             $ips =~ s/^\s+|\s+$//sg;
             @dst_ips = split /\s+/, $ips;
         } else {
