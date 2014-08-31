@@ -161,12 +161,14 @@ sub do_apply {
     push @cmds, "-A vzfw-log-deny -m addrtype --dst-type MULTICAST -j DROP\n";
     push @cmds, "-A vzfw-log-deny -m addrtype --dst-type BROADCAST -j DROP\n";
     push @cmds, "-A vzfw-log-deny -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
-    push @cmds, "-A vzfw-log-deny -j REJECT --reject-with icmp-admin-prohibited\n";
+    push @cmds, "-A vzfw-log-deny -j DROP\n";
+    #push @cmds, "-A vzfw-log-deny -j REJECT --reject-with icmp-admin-prohibited\n";
     push @cmds, "# DENY policy\n";
     push @cmds, "-A vzfw-deny -m state --state INVALID -j DROP\n";
     push @cmds, "-A vzfw-deny -m addrtype --dst-type MULTICAST -j DROP\n";
     push @cmds, "-A vzfw-deny -m addrtype --dst-type BROADCAST -j DROP\n";
-    push @cmds, "-A vzfw-deny -j REJECT --reject-with icmp-admin-prohibited\n";
+    push @cmds, "-A vzfw-deny -j DROP\n";
+    #push @cmds, "-A vzfw-deny -j REJECT --reject-with icmp-admin-prohibited\n";
     push @cmds, "\n\n";
     push @cmds, "##\n## Default opened on loopback interface.\n##\n";
     push @cmds, "-A INPUT -i lo -j ACCEPT\n";
