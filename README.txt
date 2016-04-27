@@ -70,7 +70,7 @@ SYNOPSIS
    #   
    #   # You may use "$IFACE" macro on veth containers when the IP address
    #   # cannot be determined (from IP_ADDRESS or VETH_IP_ADDRESS).
-   #   # -A FORWARD -i $IFACE -p esp -j ACCEPT
+   #   # -A FORWARD -m physdev --physdev-in $IFACE -p esp -j ACCEPT
    #"
    ...
    We use FIREWALL directive in plain VE configs, not in separate files,
