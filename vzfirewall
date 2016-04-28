@@ -393,7 +393,7 @@ sub generate_open_rule {
         ($src_ip && $src_ip ne "*"? " -s $src_ip" : "") .
         ($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") .
         ($dst_port ne "*"? " -m multiport -p $proto --dports $dst_port" : "") .
-        ($iface && $iface ne "*"? " -m physdev --physdev-out $iface" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-is-bridged --physdev-out $iface" : "") .
         ($bridge && $bridge ne "*"? " -i $bridge" : "") .
         " -j ACCEPT";
     $rule =~ s/\s+/ /sg;
@@ -408,7 +408,7 @@ sub generate_close_rule {
     my @lines = ();
     my $rule =
         ($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") .
-        ($iface && $iface ne "*"? " -m physdev --physdev-out $iface" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-is-bridged --physdev-out $iface" : "") .
         ($bridge && $bridge ne "*"? " -i $bridge" : "") .
         " -j $deny_chain\n";
     $rule =~ s/\s+/ /sg;
