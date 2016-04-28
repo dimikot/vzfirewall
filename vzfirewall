@@ -419,7 +419,16 @@ sub generate_close_rule {
 
 sub generate_outgoing_rule {
     my ($src_ip, $iface, $bridge) = @_;
-    return ($src_ip && $src_ip ne "*"? "-A FORWARD -s $src_ip" : "-A OUTPUT") . " -j ACCEPT\n";
+    my @lines = ();
+    my $rule =
+        ($src_ip && $src_ip ne "*"? " -s $src_ip" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-in $iface" : "") .
+        ($bridge && $bridge ne "*"? " -o $bridge" : "") .
+        " -j ACCEPT\n";
+    $rule =~ s/\s+/ /sg;
+    my $chain = ($src_ip or $iface)? "FORWARD" : "OUTPUT";
+    push @lines, "-A $chain" . $rule . "\n";
+    return join "", @lines;
 }
 
 sub read_openvz_conf {
