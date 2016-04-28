@@ -297,16 +297,14 @@ sub do_apply {
     push @cmds, "##\n## All other access to these IPs is closed.\n##\n";
     foreach (@parsed) {
         my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
-# fixme: send $iface and $bridge to generate_close_rule()
-        push @cmds, map { generate_close_rule($_) } @$dst_ips;
+        push @cmds, map { generate_close_rule($_, $iface, $bridge) } @$dst_ips;
     }
 
     # Generate OPEN rules for outgoing connections.
     push @cmds, "\n\n##\n## Outgoing connections are permitted.\n##\n";
     foreach (@parsed) {
         my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
-# fixme: send $iface and $bridge to generate_outgoing_rule()
-        push @cmds, map { generate_outgoing_rule($_) } @$dst_ips;
+        push @cmds, map { generate_outgoing_rule($_, $iface, $bridge) } @$dst_ips;
     }
 
     push @cmds, "\n\n##\n## Default action for incoming packets - reject.\n##\n";
@@ -405,15 +403,22 @@ sub generate_open_rule {
 }
 
 sub generate_close_rule {
-# fixme:  add iface/bridge support
-    my ($dst_ip) = @_;
+    my ($dst_ip, $iface, $bridge) = @_;
     my ($deny_chain) = ($conf{'enable-logging'} ? 'vzfw-log-deny' : 'vzfw-deny');
-    return ($dst_ip && $dst_ip ne "*"? "-A FORWARD -d $dst_ip" : "-A INPUT") . " -j $deny_chain\n";
+    my @lines = ();
+    my $rule =
+        ($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-out $iface" : "") .
+        ($bridge && $bridge ne "*"? " -i $bridge" : "") .
+        " -j $deny_chain\n";
+    $rule =~ s/\s+/ /sg;
+    my $chain = ($dst_ip or $iface)? "FORWARD" : "INPUT";
+    push @lines, "-A $chain" . $rule . "\n";
+    return join "", @lines;
 }
 
 sub generate_outgoing_rule {
-# fixme:  add iface/bridge support
-    my ($src_ip) = @_;
+    my ($src_ip, $iface, $bridge) = @_;
     return ($src_ip && $src_ip ne "*"? "-A FORWARD -s $src_ip" : "-A OUTPUT") . " -j ACCEPT\n";
 }
 
