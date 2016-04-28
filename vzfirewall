@@ -265,9 +265,9 @@ sub do_apply {
                 if (!$dst_ip and !$iface and $rule =~ m/(\$THIS|\$IFACE|\$BRIDGE)/) {
                         die "You cannot use $1 in $basename: it is for VEs only\n";
                 } elsif ($dst_ip and !$iface and $rule =~ m/(\$IFACE|\$BRIDGE)/) {
-                        die "You cannot use $1 in $basename: VE interface not found (specify NETIF)\n";
+                        die "You cannot use $1 in $basename: VE interface not found (specify with NETIF)\n";
                 } elsif (!$dst_ip and $iface and $rule =~ m/(\$THIS)/) {
-                        die "You cannot use $1 in $basename: IP address not found (specify VETH_IP_ADDRESS)\n";
+                        die "You cannot use $1 in $basename: IP Address not found (specify with VETH_IP_ADDRESS)\n";
                 }
                 $rule =~ s/\$THIS/$dst_ip/sg;
                 $rule =~ s/\$IFACE/$iface/sg;
@@ -382,7 +382,7 @@ sub read_rules {
 sub generate_open_rule {
     my ($src_ip, $dst_ip, $dst_port, $iface, $bridge, $comment) = @_;
     $dst_ip = "*" unless $dst_ip;
-    my $at_iface = " \@$iface" if $iface;
+    my $at_iface = $iface ? " \@$iface" : "";
     my @lines = ("# $comment -> $dst_ip:$dst_port$at_iface\n");
     my $proto = "tcp";
     if ($dst_port =~ /^([a-z]+):(.*)$/is) {
