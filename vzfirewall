@@ -15,7 +15,7 @@ use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Switch;
 
-my $VERSION = "1.15, 2014-08-06";
+my $VERSION = "1.16, 2016-04-27";
 
 my %conf = ();  # running configuration (defaults + config file + cli opts)
 my %opt = ();   # command line options
@@ -210,23 +210,41 @@ sub do_apply {
         my $opts = read_openvz_conf($ct_conf);
         my ($rules, $custom) = read_rules($opts->{FIREWALL});
         my @dst_ips;
+        my $iface = "";
+        my $bridge = "";
         if ($basename ne "0.conf") {
-            my $ips = $opts->{IP_ADDRESS};
-            unless ($ips) {
-                $ips = $opts->{VETH_IP_ADDRESS} or die "Cannot find IP_ADDRESS in $ct_conf\n";
+            my $ips = $opts->{IP_ADDRESS} || $opts->{VETH_IP_ADDRESS};
+            if ($ips) {
+                $ips =~ s/^\s+|\s+$|\/\S+//sg;
+                @dst_ips = split /\s+/, $ips;
+                $iface = "";
+                $bridge = "";
+            } else {
+                @dst_ips = ("");
+                my $netif = $opts->{NETIF};
+                if ($netif) {
+                    $netif =~ s/^\s+|\s+$//sg;
+                    foreach (split /,/, $netif) {
+                        /host_ifname=(.+)/ and $iface = $1;
+                        /bridge=(.+)/ and $bridge = $1;
+                    }
+                }
             }
-            $ips =~ s/^\s+|\s+$|\/\S+//sg;
-            @dst_ips = split /\s+/, $ips;
+            print STDERR "Cannot find IP_ADDRESS, VETH_IP_ADDRESS or NETIF in $ct_conf\n"
+            unless ($#dst_ips + (length $iface) + 1 > 0);
         } else {
             # "" means "host node IPs" (everything)
             @dst_ips = ("");
+            $iface = "";
+            $bridge = "";
         }
-        push @parsed, [ $basename, \@dst_ips, $rules, $custom ];
+        push @parsed, [ $basename, \@dst_ips, $iface, $bridge, $rules, $custom ];
     }
 
     # Generate OPEN commands.
     foreach (@parsed) {
-        my ($basename, $dst_ips, $rules, $custom) = @$_;
+        my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
+
         next if !@$rules && !@$custom;
         push @cmds, "##\n## Rules from $basename\n##\n";
         foreach my $dst_ip (@$dst_ips) {
@@ -235,25 +253,37 @@ sub do_apply {
                     $pair->[1], # src ip
                     $dst_ip,    # dst ip
                     $pair->[0], # dst port(s)
+                    $iface,     # iface
+                    $bridge,    # bridge
                     $pair->[2], # comment
                 );
             }
             my @ccmds = ();
             foreach my $rule_c (@$custom) {
                 my $rule = $rule_c;
-                $rule =~ s/\$THIS/$dst_ip/sg or next;
-                die "You cannot use \$THIS in $basename: it is for VEs only\n" if !$dst_ip;
+                next if $rule !~ /(\$THIS|\$IFACE|\$BRIDGE)/s;
+                if (!$dst_ip and !$iface and $rule =~ m/(\$THIS|\$IFACE|\$BRIDGE)/) {
+                        die "You cannot use $1 in $basename: it is for VEs only\n";
+                } elsif ($dst_ip and !$iface and $rule =~ m/(\$IFACE|\$BRIDGE)/) {
+                        die "You cannot use $1 in $basename: VE interface not found (specify NETIF)\n";
+                } elsif (!$dst_ip and $iface and $rule =~ m/(\$THIS)/) {
+                        die "You cannot use $1 in $basename: IP address not found (specify VETH_IP_ADDRESS)\n";
+                }
+                $rule =~ s/\$THIS/$dst_ip/sg;
+                $rule =~ s/\$IFACE/$iface/sg;
+                $rule =~ s/\$BRIDGE/$bridge/sg;
                 push @ccmds, $rule . "\n";
             }
             if (@ccmds) {
-                push @cmds, "# CUSTOM for $dst_ip ($basename):\n";
+                my $name = $dst_ip . ($dst_ip and $iface) ? "\@$iface" : $iface;
+                push @cmds, "# CUSTOM for $name ($basename):\n";
                 push @cmds, @ccmds;
                 push @cmds, "\n";
             }
         }
         my @ccmds = ();
         foreach my $rule (@$custom) {
-            next if $rule =~ /\$THIS/s;
+            next if $rule =~ /(\$THIS|\$IFACE|\$BRIDGE)/s;
             push @ccmds, $rule . "\n";
         }
         if (@ccmds) {
@@ -266,14 +296,16 @@ sub do_apply {
     # Generate CLOSE rules for all destination IPs.
     push @cmds, "##\n## All other access to these IPs is closed.\n##\n";
     foreach (@parsed) {
-        my ($basename, $dst_ips, $rules, $custom) = @$_;
+        my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
+# fixme: send $iface and $bridge to generate_close_rule()
         push @cmds, map { generate_close_rule($_) } @$dst_ips;
     }
 
     # Generate OPEN rules for outgoing connections.
     push @cmds, "\n\n##\n## Outgoing connections are permitted.\n##\n";
     foreach (@parsed) {
-        my ($basename, $dst_ips, $rules, $custom) = @$_;
+        my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
+# fixme: send $iface and $bridge to generate_outgoing_rule()
         push @cmds, map { generate_outgoing_rule($_) } @$dst_ips;
     }
 
@@ -350,7 +382,8 @@ sub read_rules {
 }
 
 sub generate_open_rule {
-    my ($src_ip, $dst_ip, $dst_port, $comment) = @_;
+    my ($src_ip, $dst_ip, $dst_port, $iface, $bridge, $comment) = @_;
+# fixme:  add iface/bridge support
     my @lines = ("# $comment -> $dst_ip:$dst_port\n");
     my $proto = "tcp";
     if ($dst_port =~ /^([a-z]+):(.*)$/is) {
@@ -369,12 +402,14 @@ sub generate_open_rule {
 }
 
 sub generate_close_rule {
+# fixme:  add iface/bridge support
     my ($dst_ip) = @_;
     my ($deny_chain) = ($conf{'enable-logging'} ? 'vzfw-log-deny' : 'vzfw-deny');
     return ($dst_ip && $dst_ip ne "*"? "-A FORWARD -d $dst_ip" : "-A INPUT") . " -j $deny_chain\n";
 }
 
 sub generate_outgoing_rule {
+# fixme:  add iface/bridge support
     my ($src_ip) = @_;
     return ($src_ip && $src_ip ne "*"? "-A FORWARD -s $src_ip" : "-A OUTPUT") . " -j ACCEPT\n";
 }
