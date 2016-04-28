@@ -383,8 +383,9 @@ sub read_rules {
 
 sub generate_open_rule {
     my ($src_ip, $dst_ip, $dst_port, $iface, $bridge, $comment) = @_;
-# fixme:  add iface/bridge support
-    my @lines = ("# $comment -> $dst_ip:$dst_port\n");
+    $dst_ip = "*" unless $dst_ip;
+    my $at_iface = " \@$iface" if $iface;
+    my @lines = ("# $comment -> $dst_ip:$dst_port$at_iface\n");
     my $proto = "tcp";
     if ($dst_port =~ /^([a-z]+):(.*)$/is) {
         $proto = $1;
@@ -394,9 +395,11 @@ sub generate_open_rule {
         ($src_ip && $src_ip ne "*"? " -s $src_ip" : "") .
         ($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") .
         ($dst_port ne "*"? " -m multiport -p $proto --dports $dst_port" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-out $iface" : "") .
+        ($bridge && $bridge ne "*"? " -i $bridge" : "") .
         " -j ACCEPT";
     $rule =~ s/\s+/ /sg;
-    my $chain = $dst_ip? "FORWARD" : "INPUT";
+    my $chain = ($dst_ip or $iface)? "FORWARD" : "INPUT";
     push @lines, "-A $chain" . $rule . "\n";
     return join "", @lines;
 }
