@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# vzfirewall: a simple firewall for OpenVZ
+# vzfirewall:  A simple firewall for OpenVZ
 #
 # See 'vzfirewall -h' for documentaion.
 #
@@ -15,7 +15,7 @@ use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Switch;
 
-my $VERSION = "1.14, 2014-01-27";
+my $VERSION = "1.17, 2016-04-29";
 
 my %conf = ();  # running configuration (defaults + config file + cli opts)
 my %opt = ();   # command line options
@@ -154,19 +154,19 @@ sub do_apply {
     push @cmds, ":vzfw-log-deny - [0:0]\n";
     push @cmds, ":vzfw-deny - [0:0]\n";
     push @cmds, "# logging with RETURN policy\n";
-    push @cmds, "-A vzfw-log-allow -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW ALLOW] \"\n";
+    push @cmds, "-A vzfw-log-allow -m limit --limit 12/min --limit-burst 10 -j LOG --log-prefix \"[VZFW ALLOW] \"\n";
     push @cmds, "# logging with DENY policy\n";
-    push @cmds, "-A vzfw-log-deny -m state --state INVALID -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
+    push @cmds, "-A vzfw-log-deny -m state --state INVALID -m limit --limit 12/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
     push @cmds, "-A vzfw-log-deny -m state --state INVALID -j DROP\n";
     push @cmds, "-A vzfw-log-deny -m addrtype --dst-type MULTICAST -j DROP\n";
     push @cmds, "-A vzfw-log-deny -m addrtype --dst-type BROADCAST -j DROP\n";
-    push @cmds, "-A vzfw-log-deny -m limit --limit 3/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
-    push @cmds, "-A vzfw-log-deny -j REJECT --reject-with icmp-admin-prohibited\n";
+    push @cmds, "-A vzfw-log-deny -m limit --limit 12/min --limit-burst 10 -j LOG --log-prefix \"[VZFW BLOCK] \"\n";
+    push @cmds, "-A vzfw-log-deny -j DROP\n";
     push @cmds, "# DENY policy\n";
     push @cmds, "-A vzfw-deny -m state --state INVALID -j DROP\n";
     push @cmds, "-A vzfw-deny -m addrtype --dst-type MULTICAST -j DROP\n";
     push @cmds, "-A vzfw-deny -m addrtype --dst-type BROADCAST -j DROP\n";
-    push @cmds, "-A vzfw-deny -j REJECT --reject-with icmp-admin-prohibited\n";
+    push @cmds, "-A vzfw-deny -j DROP\n";
     push @cmds, "\n\n";
     push @cmds, "##\n## Default opened on loopback interface.\n##\n";
     push @cmds, "-A INPUT -i lo -j ACCEPT\n";
@@ -176,7 +176,12 @@ sub do_apply {
     push @cmds, "-A INPUT -m addrtype --src-type LOCAL -j $deny_chain\n";
     for my $chain ("INPUT", "OUTPUT", "FORWARD") {
         push @cmds, "\n##\n## Firewall states ($chain).\n##\n";
-        push @cmds, "-A $chain -m state --state INVALID -j $deny_chain\n";
+
+        # Block INVALID in FORWARD chain below (interferes with vzmigrate live migrations)
+        if ($chain ne "FORWARD") {
+            push @cmds, "-A $chain -m state --state INVALID -j $deny_chain\n";
+        }
+
         push @cmds, "-A $chain -m state --state ESTABLISHED,RELATED -j ACCEPT\n";
 
         push @cmds, "# Allowed icmp types\n";
@@ -210,20 +215,41 @@ sub do_apply {
         my $opts = read_openvz_conf($ct_conf);
         my ($rules, $custom) = read_rules($opts->{FIREWALL});
         my @dst_ips;
+        my $iface = "";
+        my $bridge = "";
         if ($basename ne "0.conf") {
-            my $ips = $opts->{IP_ADDRESS} or die "Cannot find IP_ADDRESS in $ct_conf\n";
-            $ips =~ s/^\s+|\s+$//sg;
-            @dst_ips = split /\s+/, $ips;
+            my $ips = $opts->{IP_ADDRESS} || $opts->{VETH_IP_ADDRESS};
+            if ($ips) {
+                $ips =~ s/^\s+|\s+$|\/\S+//sg;
+                @dst_ips = split /\s+/, $ips;
+                $iface = "";
+                $bridge = "";
+            } else {
+                @dst_ips = ("");
+                my $netif = $opts->{NETIF};
+                if ($netif) {
+                    $netif =~ s/^\s+|\s+$//sg;
+                    foreach (split /,/, $netif) {
+                        /host_ifname=(.+)/ and $iface = $1;
+                        /bridge=(.+)/ and $bridge = $1;
+                    }
+                }
+            }
+            print STDERR "Cannot find IP_ADDRESS, VETH_IP_ADDRESS or NETIF in $ct_conf\n"
+            unless ($#dst_ips + (length $iface) + 1 > 0);
         } else {
-            # "" meands "host node IPs" (everything)
+            # "" means "host node IPs" (everything)
             @dst_ips = ("");
+            $iface = "";
+            $bridge = "";
         }
-        push @parsed, [ $basename, \@dst_ips, $rules, $custom ];
+        push @parsed, [ $basename, \@dst_ips, $iface, $bridge, $rules, $custom ];
     }
 
     # Generate OPEN commands.
     foreach (@parsed) {
-        my ($basename, $dst_ips, $rules, $custom) = @$_;
+        my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
+
         next if !@$rules && !@$custom;
         push @cmds, "##\n## Rules from $basename\n##\n";
         foreach my $dst_ip (@$dst_ips) {
@@ -232,25 +258,37 @@ sub do_apply {
                     $pair->[1], # src ip
                     $dst_ip,    # dst ip
                     $pair->[0], # dst port(s)
+                    $iface,     # iface
+                    $bridge,    # bridge
                     $pair->[2], # comment
                 );
             }
             my @ccmds = ();
             foreach my $rule_c (@$custom) {
                 my $rule = $rule_c;
-                $rule =~ s/\$THIS/$dst_ip/sg or next;
-                die "You cannot use \$THIS in $basename: it is for VEs only\n" if !$dst_ip;
+                next if $rule !~ /(\$THIS|\$IFACE|\$BRIDGE)/s;
+                if (!$dst_ip and !$iface and $rule =~ m/(\$THIS|\$IFACE|\$BRIDGE)/) {
+                        die "You cannot use $1 in $basename: it is for VEs only\n";
+                } elsif ($dst_ip and !$iface and $rule =~ m/(\$IFACE|\$BRIDGE)/) {
+                        die "You cannot use $1 in $basename: VE interface not found (specify with NETIF)\n";
+                } elsif (!$dst_ip and $iface and $rule =~ m/(\$THIS)/) {
+                        die "You cannot use $1 in $basename: IP Address not found (specify with VETH_IP_ADDRESS)\n";
+                }
+                $rule =~ s/\$THIS/$dst_ip/sg;
+                $rule =~ s/\$IFACE/$iface/sg;
+                $rule =~ s/\$BRIDGE/$bridge/sg;
                 push @ccmds, $rule . "\n";
             }
             if (@ccmds) {
-                push @cmds, "# CUSTOM for $dst_ip ($basename):\n";
+                my $name = $dst_ip . ($dst_ip and $iface) ? "\@$iface" : $iface;
+                push @cmds, "# CUSTOM for $name ($basename):\n";
                 push @cmds, @ccmds;
                 push @cmds, "\n";
             }
         }
         my @ccmds = ();
         foreach my $rule (@$custom) {
-            next if $rule =~ /\$THIS/s;
+            next if $rule =~ /(\$THIS|\$IFACE|\$BRIDGE)/s;
             push @ccmds, $rule . "\n";
         }
         if (@ccmds) {
@@ -260,18 +298,21 @@ sub do_apply {
         push @cmds, "\n\n";
     }
 
+    # Block INVALID in FORWARD chain here, after allowing new connections
+    push @cmds, "-A FORWARD -m state --state INVALID -j $deny_chain\n";
+
     # Generate CLOSE rules for all destination IPs.
     push @cmds, "##\n## All other access to these IPs is closed.\n##\n";
     foreach (@parsed) {
-        my ($basename, $dst_ips, $rules, $custom) = @$_;
-        push @cmds, map { generate_close_rule($_) } @$dst_ips;
+        my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
+        push @cmds, map { generate_close_rule($_, $iface, $bridge) } @$dst_ips;
     }
 
     # Generate OPEN rules for outgoing connections.
     push @cmds, "\n\n##\n## Outgoing connections are permitted.\n##\n";
     foreach (@parsed) {
-        my ($basename, $dst_ips, $rules, $custom) = @$_;
-        push @cmds, map { generate_outgoing_rule($_) } @$dst_ips;
+        my ($basename, $dst_ips, $iface, $bridge, $rules, $custom) = @$_;
+        push @cmds, map { generate_outgoing_rule($_, $iface, $bridge) } @$dst_ips;
     }
 
     push @cmds, "\n\n##\n## Default action for incoming packets - reject.\n##\n";
@@ -347,8 +388,10 @@ sub read_rules {
 }
 
 sub generate_open_rule {
-    my ($src_ip, $dst_ip, $dst_port, $comment) = @_;
-    my @lines = ("# $comment -> $dst_ip:$dst_port\n");
+    my ($src_ip, $dst_ip, $dst_port, $iface, $bridge, $comment) = @_;
+    $dst_ip = "*" unless $dst_ip;
+    my $at_iface = $iface ? " \@$iface" : "";
+    my @lines = ("# $comment -> $dst_ip:$dst_port$at_iface\n");
     my $proto = "tcp";
     if ($dst_port =~ /^([a-z]+):(.*)$/is) {
         $proto = $1;
@@ -358,22 +401,43 @@ sub generate_open_rule {
         ($src_ip && $src_ip ne "*"? " -s $src_ip" : "") .
         ($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") .
         ($dst_port ne "*"? " -m multiport -p $proto --dports $dst_port" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-is-bridged --physdev-out $iface" : "") .
+        ($bridge && $bridge ne "*"? " -i $bridge" : "") .
         " -j ACCEPT";
     $rule =~ s/\s+/ /sg;
-    my $chain = $dst_ip? "FORWARD" : "INPUT";
-    push @lines, "-A $chain" . $rule . "\n";
+    my $chain = ($dst_ip or $iface)? "FORWARD" : "INPUT";
+    my $state = ($dst_ip or $iface)? " -m state --state NEW" : "";
+    push @lines, "-A $chain" . $state . $rule . "\n";
     return join "", @lines;
 }
 
 sub generate_close_rule {
-    my ($dst_ip) = @_;
+    my ($dst_ip, $iface, $bridge) = @_;
     my ($deny_chain) = ($conf{'enable-logging'} ? 'vzfw-log-deny' : 'vzfw-deny');
-    return ($dst_ip && $dst_ip ne "*"? "-A FORWARD -d $dst_ip" : "-A INPUT") . " -j $deny_chain\n";
+    my @lines = ();
+    my $rule =
+        ($dst_ip && $dst_ip ne "*"? " -d $dst_ip" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-is-bridged --physdev-out $iface" : "") .
+        ($bridge && $bridge ne "*"? " -i $bridge" : "") .
+        " -j $deny_chain\n";
+    $rule =~ s/\s+/ /sg;
+    my $chain = ($dst_ip or $iface)? "FORWARD" : "INPUT";
+    push @lines, "-A $chain" . $rule . "\n";
+    return join "", @lines;
 }
 
 sub generate_outgoing_rule {
-    my ($src_ip) = @_;
-    return ($src_ip && $src_ip ne "*"? "-A FORWARD -s $src_ip" : "-A OUTPUT") . " -j ACCEPT\n";
+    my ($src_ip, $iface, $bridge) = @_;
+    my @lines = ();
+    my $rule =
+        ($src_ip && $src_ip ne "*"? " -s $src_ip" : "") .
+        ($iface && $iface ne "*"? " -m physdev --physdev-in $iface" : "") .
+        ($bridge && $bridge ne "*"? " -o $bridge" : "") .
+        " -j ACCEPT\n";
+    $rule =~ s/\s+/ /sg;
+    my $chain = ($src_ip or $iface)? "FORWARD" : "OUTPUT";
+    push @lines, "-A $chain" . $rule . "\n";
+    return join "", @lines;
 }
 
 sub read_openvz_conf {

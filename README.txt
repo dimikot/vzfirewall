@@ -25,13 +25,16 @@ cd /usr/sbin
 wget http://github.com/DmitryKoterov/vzfirewall/raw/master/vzfirewall
 chmod +x vzfirewall
 
-# Optional:  vps.premount action script to ensure vzfirewall is run
-# (handy when you vzmigrate containers)
+# Optional:  vps.premount and vps.postumount action scripts to
+# ensure vzfirewall is run (handy when you vzmigrate containers)
 
 cd /etc/vz/conf
 (test -f vps.premount && echo "vps.premount exists, manual integration required") || ( \
     wget http://github.com/DmitryKoterov/vzfirewall/raw/master/vps.premount; \
     chmod +x vps.premount )
+(test -f vps.postumount && echo "vps.postumount exists, manual integration required") || ( \
+    wget http://github.com/DmitryKoterov/vzfirewall/raw/master/vps.postumount; \
+    chmod +x vps.postumount )
 
 
 SYNOPSIS
@@ -60,9 +63,14 @@ SYNOPSIS
    #   # You may use "$THIS" macro which is replaced by this machine IP
    #   # (and, if the machine has many IPs, it will be multiplicated).
    #   -A INPUT -i eth2 -d $THIS -j ACCEPT
+   #   
    #   # Or you may use commands with no references to $THIS (only
    #   # such commands are allowed for 0.conf file).
    #   -A INPUT -i eth1 -j ACCEPT
+   #   
+   #   # You may use "$IFACE" macro on veth containers when the IP address
+   #   # cannot be determined (from IP_ADDRESS or VETH_IP_ADDRESS).
+   #   # -A FORWARD -m physdev --physdev-in $IFACE -p esp -j ACCEPT
    #"
    ...
    We use FIREWALL directive in plain VE configs, not in separate files,
