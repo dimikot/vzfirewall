@@ -15,7 +15,7 @@ use POSIX 'strftime';
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Switch;
 
-my $VERSION = "1.16, 2016-04-27";
+my $VERSION = "1.17, 2016-04-29";
 
 my %conf = ();  # running configuration (defaults + config file + cli opts)
 my %opt = ();   # command line options
@@ -176,7 +176,12 @@ sub do_apply {
     push @cmds, "-A INPUT -m addrtype --src-type LOCAL -j $deny_chain\n";
     for my $chain ("INPUT", "OUTPUT", "FORWARD") {
         push @cmds, "\n##\n## Firewall states ($chain).\n##\n";
-        push @cmds, "-A $chain -m state --state INVALID -j $deny_chain\n";
+
+        # Block INVALID in FORWARD chain below (interferes with vzmigrate live migrations)
+        if ($chain ne "FORWARD") {
+            push @cmds, "-A $chain -m state --state INVALID -j $deny_chain\n";
+        }
+
         push @cmds, "-A $chain -m state --state ESTABLISHED,RELATED -j ACCEPT\n";
 
         push @cmds, "# Allowed icmp types\n";
@@ -293,6 +298,9 @@ sub do_apply {
         push @cmds, "\n\n";
     }
 
+    # Block INVALID in FORWARD chain here, after allowing new connections
+    push @cmds, "-A FORWARD -m state --state INVALID -j $deny_chain\n";
+
     # Generate CLOSE rules for all destination IPs.
     push @cmds, "##\n## All other access to these IPs is closed.\n##\n";
     foreach (@parsed) {
@@ -398,7 +406,8 @@ sub generate_open_rule {
         " -j ACCEPT";
     $rule =~ s/\s+/ /sg;
     my $chain = ($dst_ip or $iface)? "FORWARD" : "INPUT";
-    push @lines, "-A $chain" . $rule . "\n";
+    my $state = ($dst_ip or $iface)? " -m state --state NEW" : "";
+    push @lines, "-A $chain" . $state . $rule . "\n";
     return join "", @lines;
 }
 
